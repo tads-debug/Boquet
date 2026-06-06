@@ -820,6 +820,7 @@ function showPresent(){
   const clone=stage.cloneNode(true);
   clone.querySelector('#empty')?.remove();
   clone.style.transform=''; clone.id='';
+  clone.querySelectorAll('.bloom').forEach(b=>b.classList.add('in'));  // snapshot may be taken before flowers fade in — force them visible
   gs.innerHTML=''; gs.appendChild(clone);
   // letter
   const to=document.getElementById('fTo').value.trim();
