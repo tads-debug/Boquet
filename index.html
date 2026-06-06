@@ -850,15 +850,38 @@ function setUnlocked(){ try{ localStorage.setItem('bm_share_unlocked','1'); }cat
 function b64enc(s){ return btoa(unescape(encodeURIComponent(s))); }
 function b64dec(s){ return decodeURIComponent(escape(atob(s))); }
 
-function serializeGift(){
+function buildGiftObj(){
   const f=state.placed.map(p=>[p.ti,p.variant,p.color,Math.round(p.x),Math.round(p.y),
-    +(+p.scale).toFixed(3),Math.round(p.rot),p.z]);
+    +(+p.scale).toFixed(2),Math.round(p.rot),p.z]);
   const l={t:document.getElementById('fTo').value.trim(),
            m:document.getElementById('fMsg').value.trim(),
            r:document.getElementById('fFrom').value.trim()};
-  return b64enc(JSON.stringify({v:1,f,w:state.wrap,b:state.rib,l}));
+  return {v:1,f,w:state.wrap,b:state.rib,l};
 }
-function giftLink(){ return baseUrl()+'#g='+encodeURIComponent(serializeGift()); }
+function serializeGift(){ return b64enc(JSON.stringify(buildGiftObj())); }  // legacy b64 (checkout round-trip)
+
+/* URL-safe base64 — no +,/,= so links survive WhatsApp & every app */
+function bytesToB64url(b){ let s=''; for(let i=0;i<b.length;i++) s+=String.fromCharCode(b[i]);
+  return btoa(s).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); }
+function b64urlToBytes(s){ s=s.replace(/-/g,'+').replace(/_/g,'/'); const bin=atob(s);
+  const b=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) b[i]=bin.charCodeAt(i); return b; }
+async function deflate(str){
+  if(typeof CompressionStream==='undefined') return null;
+  const cs=new CompressionStream('gzip'); const w=cs.writable.getWriter();
+  w.write(new TextEncoder().encode(str)); w.close();
+  return new Uint8Array(await new Response(cs.readable).arrayBuffer());
+}
+async function inflate(bytes){
+  const ds=new DecompressionStream('gzip'); const w=ds.writable.getWriter();
+  w.write(bytes); w.close();
+  return new TextDecoder().decode(await new Response(ds.readable).arrayBuffer());
+}
+/* shortest possible link: compressed (#c=) when supported, else plain (#u=) — both URL-safe */
+async function giftLink(){
+  const json=JSON.stringify(buildGiftObj());
+  try{ const z=await deflate(json); if(z) return baseUrl()+'#c='+bytesToB64url(z); }catch(e){}
+  return baseUrl()+'#u='+bytesToB64url(new TextEncoder().encode(json));
+}
 
 function openShare(){
   document.getElementById('priceOne').textContent=PAYMENT.oneTime.price;
@@ -870,11 +893,13 @@ function showLockedShare(){
   document.getElementById('shareLocked').style.display='';
   document.getElementById('shareUnlocked').style.display='none';
 }
-function showUnlockedShare(){
+async function showUnlockedShare(){
   document.getElementById('shareLocked').style.display='none';
   document.getElementById('shareUnlocked').style.display='';
-  const link=giftLink();
-  document.getElementById('shareLink').value=link;
+  const linkEl=document.getElementById('shareLink');
+  linkEl.value='preparing your link…';
+  const link=await giftLink();
+  linkEl.value=link;
   document.getElementById('qrImg').src=
     'https://api.qrserver.com/v1/create-qr-code/?size=300x300&margin=8&data='+encodeURIComponent(link);
   document.getElementById('waShare').href='https://wa.me/?text='+encodeURIComponent('A little something for you 💐 '+link);
@@ -906,9 +931,8 @@ document.getElementById('copyLink').addEventListener('click',()=>{
 
 /* rebuild a bouquet from an encoded string (used by both the recipient
    link and the "returned from checkout" restore) */
-function rebuildFromEncoded(enc){
+function applyGift(obj){
   try{
-    const obj=JSON.parse(b64dec(enc));
     if(!obj||obj.v!==1||!Array.isArray(obj.f)) return false;
     if(obj.w) state.wrap=obj.w; if(obj.b) state.rib=obj.b;
     obj.f.forEach(a=>{
@@ -923,13 +947,36 @@ function rebuildFromEncoded(enc){
     document.getElementById('fMsg').value=l.m||'';
     document.getElementById('fFrom').value=l.r||'';
     refresh();
-    return true;
+    return state.placed.length>0;
   }catch(e){ return false; }
 }
-/* recipient: rebuild a shared gift from the URL (#g=...) */
-function loadFromHash(){
-  const h=location.hash; if(h.indexOf('#g=')!==0) return false;
-  return rebuildFromEncoded(decodeURIComponent(h.slice(3)));
+/* legacy base64 payload (used by the checkout round-trip restore) */
+function rebuildFromEncoded(enc){
+  try{ return applyGift(JSON.parse(b64dec(enc))); }catch(e){ return false; }
+}
+/* recipient: rebuild a shared gift from the URL (#c= compressed, #u= plain, #g= legacy) */
+async function loadFromHash(){
+  const h=location.hash; let json=null;
+  try{
+    if(h.indexOf('#c=')===0)      json=await inflate(b64urlToBytes(h.slice(3)));
+    else if(h.indexOf('#u=')===0) json=new TextDecoder().decode(b64urlToBytes(h.slice(3)));
+    else if(h.indexOf('#g=')===0) json=b64dec(decodeURIComponent(h.slice(3)));   // older links
+    else return false;
+  }catch(e){ return false; }
+  try{ return applyGift(JSON.parse(json)); }catch(e){ return false; }
+}
+/* shown when a gift link arrives but won't decode (usually truncated when shared) */
+function showBrokenGift(){
+  const d=document.createElement('div');
+  d.style.cssText='position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;'+
+    'background:radial-gradient(circle at 50% 30%,#fdfaf3,#efe6d8);padding:28px;text-align:center';
+  d.innerHTML='<div style="max-width:420px;font-family:Georgia,serif;color:#5a4a40">'+
+    '<div style="font-size:46px;margin-bottom:10px">💐</div>'+
+    '<h2 style="font-weight:400;color:#9c4a68;margin-bottom:12px">This gift link looks incomplete</h2>'+
+    '<p style="line-height:1.6;opacity:.85">It may have been cut off when it was sent. Ask whoever sent it to use '+
+    'the <b>Copy link</b> button and paste the whole thing — or to send it again.</p>'+
+    '<p style="margin-top:18px"><a href="'+baseUrl()+'" style="color:#c14a72">Make your own bouquet →</a></p></div>';
+  document.body.appendChild(d);
 }
 /* sharer returning from checkout: ?paid=... unlocks + restores their bouquet */
 function handlePaidReturn(){
@@ -967,7 +1014,7 @@ document.getElementById('backBtn').addEventListener('click',()=>present.classLis
 
 /* ---------- init ---------- */
 scaleStage();
-preload(()=>{
+preload(async ()=>{
   FLOWERS.forEach((f,i)=>refreshThumb(i));  // show tinted thumbnails
   render();
   // testing helper: open the page with ?lock  to clear a remembered unlock
@@ -978,13 +1025,16 @@ preload(()=>{
   // returning from checkout (?paid=…): unlock + restore the bouquet, then stop
   if(handlePaidReturn()) return;
   // if opened via a shared gift link, rebuild it and show the present view
-  if(loadFromHash()){
+  const looksLikeGift=/^#(c|u|g)=/.test(location.hash);
+  if(await loadFromHash()){
     document.body.classList.add('recipient');
     document.getElementById('backBtn').style.display='none';
     document.getElementById('shareBtn').style.display='none';
     const mo=document.getElementById('makeOwn');
     mo.style.display=''; mo.href=baseUrl();
     showPresent();
+  } else if(looksLikeGift){
+    showBrokenGift();                         // link arrived but couldn't decode (likely truncated)
   }
 });
 </script>
