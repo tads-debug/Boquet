@@ -98,6 +98,7 @@
   #bowLayer{position:absolute;inset:0;pointer-events:none;z-index:500}
   .bloom{position:absolute;will-change:transform;opacity:0;transition:opacity .35s ease}
   .bloom.in{opacity:1}
+  #giftStage .bloom{opacity:1!important}   /* recipient/gift snapshot: flowers always visible, never wait on the fade-in */
   @keyframes pop{0%{transform:scale(.3);opacity:0}60%{transform:scale(1.08)}100%{transform:scale(1);opacity:1}}
   .bloom .inner{position:absolute;inset:0;cursor:grab;touch-action:none;
     animation:pop .42s cubic-bezier(.2,.9,.3,1.4) both}
@@ -391,8 +392,8 @@
 const PAYMENT = {
   provider   : "stripe",          // just a label: "stripe" | "lemonsqueezy" | "gumroad"
   // Two ways to pay — buyer picks one. Paste each provider checkout link.
-  oneTime    : { url:"https://your-onetime-link-here.example",      price:"£4"       },
-  subscription:{ url:"https://your-subscription-link-here.example", price:"£10/mo"   },
+  oneTime    : { url:"https://buy.stripe.com/4gMbJ07j37LMdBQbct1Jm00", price:"£4"       },
+  subscription:{ url:"https://buy.stripe.com/4gMdR81YJ2rs2Xc94l1Jm01", price:"£10/mo"   },
   unlockParam: "paid",            // the ?query key your success URL comes back with
   unlockValue: ""                 // require an exact value? leave "" to accept any value
 };
