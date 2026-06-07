@@ -413,6 +413,13 @@ const FLOWERS = [
   {name:"tulip",         base:"tulip",       n:12, color:"#e23c54"},
   {name:"lily",          base:"lily",        n:6, color:"#c77dff"},
   {name:"baby's breath", base:"babysbreath", n:3, color:"#ffffff"},
+  {name:"orchid",        base:"orchid",      n:6, color:"#c77dff"},
+  {name:"calla lily",    base:"calla",       n:5, color:"#ffd24a"},
+  {name:"daisy",         base:"daisy",       n:6, color:"#ffd24a"},
+  {name:"hibiscus",      base:"hibiscus",    n:6, color:"#ff8a3d"},
+  {name:"delphinium",    base:"delphinium",  n:2, color:"#5aa9e6"},
+  {name:"chrysanthemum", base:"chrysanth",   n:6, color:"#ff9ec2"},
+  {name:"snowdrop",      base:"snowdrop",    n:6, color:"#ffffff"},
 ];
 /* the image key for a flower's currently-chosen angle/variant */
 function fkey(i){ return FLOWERS[i].base + ":" + state.variant[i]; }
@@ -457,10 +464,13 @@ function preload(cb){
   const keys=Object.keys(FLOWER_DATA); let n=keys.length;
   keys.forEach(k=>{
     const im=new Image();
+    im.crossOrigin='anonymous';
     im.onload=()=>{
-      const c=document.createElement('canvas');c.width=im.width;c.height=im.height;
-      const cx=c.getContext('2d');cx.drawImage(im,0,0);
-      _baseData[k]=cx.getImageData(0,0,im.width,im.height);
+      try{
+        const c=document.createElement('canvas');c.width=im.width;c.height=im.height;
+        const cx=c.getContext('2d');cx.drawImage(im,0,0);
+        _baseData[k]=cx.getImageData(0,0,im.width,im.height);
+      }catch(e){ /* tainted (e.g. opened from file://) — flower shows untinted */ }
       if(--n===0&&cb)cb();
     };
     im.onerror=()=>{ if(--n===0&&cb)cb(); };
