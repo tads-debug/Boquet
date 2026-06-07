@@ -355,7 +355,6 @@
             <button class="btn big" id="buySub">Go unlimited</button>
           </div>
         </div>
-        <button class="linklike" id="havePaid">I've already paid — unlock</button>
       </div>
       <div id="shareUnlocked" style="display:none">
         <div class="emoji">🎉</div>
@@ -390,12 +389,14 @@
    See LAUNCH-PLAN.md for the per-provider steps.
    ============================================================ */
 const PAYMENT = {
-  provider   : "stripe",          // just a label: "stripe" | "lemonsqueezy" | "gumroad"
-  // Two ways to pay — buyer picks one. Paste each provider checkout link.
+  provider   : "stripe",          // just a label
+  // Two ways to pay — buyer picks one. Paste each Stripe checkout link.
   oneTime    : { url:"https://buy.stripe.com/4gMbJ07j37LMdBQbct1Jm00", price:"£4"       },
   subscription:{ url:"https://buy.stripe.com/4gMdR81YJ2rs2Xc94l1Jm01", price:"£10/mo"   },
-  unlockParam: "paid",            // the ?query key your success URL comes back with
-  unlockValue: ""                 // require an exact value? leave "" to accept any value
+  // Server-side payment check (strong unlock). Paste your Cloudflare Worker URL here,
+  // e.g. "https://bouquet-verify.yourname.workers.dev". See payments/SETUP-PAYMENTS.md.
+  // While this is "" the page unlocks on return WITHOUT verifying — for testing only.
+  verifyUrl  : "https://boquetpay.trishaanndenis.workers.dev"
 };
 /* ============================================================
    ✏️  FLOWER TYPES — add/rename here.
@@ -914,15 +915,10 @@ shareModal.addEventListener('click',e=>{ if(e.target===shareModal) shareModal.cl
 function goCheckout(url){
   // remember the bouquet so it survives the trip to checkout & back
   try{ localStorage.setItem('bm_pending_gift', serializeGift()); }catch(e){}
-  if(!url || url.indexOf('example')>-1){
-    // not configured yet — fall back to the honour-system unlock so testing works
-    setUnlocked(); showUnlockedShare(); return;
-  }
-  location.href = url;             // same tab, so your success-redirect lands back here
+  if(url) location.href = url;     // same tab, so the success-redirect lands back here
 }
 document.getElementById('buyOne').addEventListener('click',()=>goCheckout(PAYMENT.oneTime.url));
 document.getElementById('buySub').addEventListener('click',()=>goCheckout(PAYMENT.subscription.url));
-document.getElementById('havePaid').addEventListener('click',()=>{ setUnlocked(); showUnlockedShare(); });
 document.getElementById('copyLink').addEventListener('click',()=>{
   const inp=document.getElementById('shareLink'); inp.select();
   const done=()=>{ const b=document.getElementById('copyLink'); b.textContent='Copied ✓';
@@ -980,21 +976,46 @@ function showBrokenGift(){
     '<p style="margin-top:18px"><a href="'+baseUrl()+'" style="color:#c14a72">Make your own bouquet →</a></p></div>';
   document.body.appendChild(d);
 }
-/* sharer returning from checkout: ?paid=... unlocks + restores their bouquet */
-function handlePaidReturn(){
-  const params=new URLSearchParams(location.search);
-  const val=params.get(PAYMENT.unlockParam);
-  if(val===null) return false;
-  if(PAYMENT.unlockValue && val!==PAYMENT.unlockValue) return false;
+/* simple overlay used while we check payment, and if the check fails */
+function showOverlay(html){
+  const d=document.createElement('div'); d.id='payOverlay';
+  d.style.cssText='position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;'+
+    'background:radial-gradient(circle at 50% 30%,#fdfaf3,#efe6d8);padding:28px;text-align:center';
+  d.innerHTML='<div style="max-width:420px;font-family:Georgia,serif;color:#5a4a40">'+html+'</div>';
+  document.body.appendChild(d); return d;
+}
+/* sharer returning from Stripe: ?session_id=… is verified server-side before unlocking */
+async function handleCheckoutReturn(){
+  const sid=new URLSearchParams(location.search).get('session_id');
+  if(!sid) return false;
+  history.replaceState(null,'',baseUrl());     // strip the query from the address bar
+  const wait=showOverlay('<div style="font-size:42px">💐</div><p style="margin-top:10px;opacity:.8">Confirming your payment…</p>');
+  let ok=false;
+  if(PAYMENT.verifyUrl){
+    try{
+      const r=await fetch(PAYMENT.verifyUrl+'?session_id='+encodeURIComponent(sid));
+      const j=await r.json(); ok=!!j.paid;
+    }catch(e){ ok=false; }
+  }else{
+    ok=true;   // TEST MODE: no verifyUrl set yet — unlocks without checking. Set verifyUrl to enforce real payment.
+  }
+  wait.remove();
+  if(!ok){
+    showOverlay('<div style="font-size:42px">🙈</div>'+
+      '<h2 style="font-weight:400;color:#9c4a68;margin:12px 0">We couldn\'t confirm that payment</h2>'+
+      '<p style="line-height:1.6;opacity:.85">If you were charged, contact us and we\'ll sort it out. '+
+      'Otherwise you can try again.</p>'+
+      '<p style="margin-top:18px"><a href="'+baseUrl()+'" style="color:#c14a72">Back to your bouquet →</a></p>');
+    return true;
+  }
   setUnlocked();
   let restored=false;
   try{
     const pend=localStorage.getItem('bm_pending_gift');
     if(pend){ restored=rebuildFromEncoded(pend); localStorage.removeItem('bm_pending_gift'); }
   }catch(e){}
-  history.replaceState(null,'',baseUrl());   // strip ?paid= from the address bar
   if(restored){ showPresent(); }
-  openShare();                                // jump straight to the ready-to-send link
+  openShare();                                  // jump straight to the ready-to-send link
   return true;
 }
 /* tap the envelope to open it; the letter rises up beside the bouquet */
@@ -1024,8 +1045,8 @@ preload(async ()=>{
     try{ localStorage.removeItem('bm_share_unlocked'); }catch(e){}
     history.replaceState(null,'',baseUrl());
   }
-  // returning from checkout (?paid=…): unlock + restore the bouquet, then stop
-  if(handlePaidReturn()) return;
+  // returning from Stripe (?session_id=…): verify payment, unlock + restore the bouquet, then stop
+  if(await handleCheckoutReturn()) return;
   // if opened via a shared gift link, rebuild it and show the present view
   const looksLikeGift=/^#(c|u|g)=/.test(location.hash);
   if(await loadFromHash()){
